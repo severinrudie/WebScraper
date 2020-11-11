@@ -27,6 +27,9 @@ jobs:
           java-version: '15'
       # Sets up Kotlin
       - uses: fwilhe2/setup-kotlin@main
+      # Builds and stores all local dependencies
+      - name: Maven install
+        run: mvn install
 
       - name: Run tests
         run: mvn test
