@@ -5,16 +5,19 @@
 
     <artifactId>WebScraper</artifactId>
     <groupId>e.severin.rudie</groupId>
-    <version>1.0-SNAPSHOT</version>
+    <version>${revision}</version>
     <modules>
         <module>Fetcher</module>
         <module>Shared</module>
+        <module>Parser</module>
     </modules>
     <packaging>pom</packaging>
 
     <name>e.severin.rudie WebScraper</name>
 
     <properties>
+        <revision>1.0-SNAPSHOT</revision>
+
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>15</maven.compiler.release>
         <kotlin.version>1.4.10</kotlin.version>
@@ -97,6 +100,33 @@
                     <source>15</source>
                     <target>15</target>
                 </configuration>
+            </plugin>
+
+            <!-- Flattening allows child modules to use `revision` property when
+            specifying parent version -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+                <version>1.0.0</version>
+                <configuration>
+                    <updatePomFile>true</updatePomFile>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>flatten</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>flatten</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>flatten.clean</id>
+                        <phase>clean</phase>
+                        <goals>
+                            <goal>clean</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
