@@ -25,3 +25,7 @@ hs_err_pid*
 # generated test files
 target
 
+# idea files
+.idea/compiler.xml
+.idea/encodings.xml
+

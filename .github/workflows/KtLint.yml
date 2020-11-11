@@ -27,6 +27,9 @@ jobs:
           java-version: '15'
       # Sets up Kotlin
       - uses: fwilhe2/setup-kotlin@main
+      # Builds and stores all local dependencies
+      - name: Maven install
+        run: mvn install
       # Runs KtLint
       - name: KtLint format
         run: mvn com.github.gantsign.maven:ktlint-maven-plugin:1.7.0:format
