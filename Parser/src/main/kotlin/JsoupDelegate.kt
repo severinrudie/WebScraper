@@ -19,9 +19,10 @@ class JsoupDelegate : Contract.Parser {
         val document = Jsoup.parse(raw)
 
         return Parsing.Result(
-            Parsing.Metadata(metadata.url),
-            getTargetedText(document, targetDefinition),
-            getLinks(document, linkMatchDefinition)
+            metadata = Parsing.Metadata(metadata.url),
+            responseCode = raw.naiveExtractCode(),
+            foundText = getTargetedText(document, targetDefinition),
+            followUpLinks = getLinks(document, linkMatchDefinition)
         )
     }
 
