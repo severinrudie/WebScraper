@@ -1,97 +1,150 @@
-import e.severin.rudie.Contract
-import e.severin.rudie.RawResponse
+import e.severin.rudie.Either
+import e.severin.rudie.Response
+import e.severin.rudie.SimpleFuture
+import e.severin.rudie.getIfComplete
 import java.io.ByteArrayOutputStream
-import java.net.InetSocketAddress
+import java.net.SocketException
 import java.net.URL
 import java.nio.ByteBuffer
-import java.nio.channels.ReadableByteChannel
 import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Future
+import java.util.concurrent.TimeoutException
 
-private const val twoMb = 2 * 1024 * 1024
+private const val TWO_MB = 2 * 1024 * 1024
 
-/**
- * Simple, extremely naive HTTP request.
- *
- * Single-threaded but non-blocking.
- */
-class HttpRequest(private val url: URL) {
+// TODO:
+//  - follow redirects
+//  - handle HTTPS (probably a wrapper around this)
+//  - so, so much more...
+// Internal constructor exists for testing
+class HttpRequest internal constructor(
+    private val url: URL,
+    private val executor: ExecutorService,
+    private val config: Config,
+    private val getTimeMs: () -> Long,
+    private val openSocket: (URL) -> Either<SocketChannel, Exception>
+) {
 
-    fun send(): HttpResponse {
-        val remote = InetSocketAddress(url.host, 80)
-        val channel = SocketChannel.open(remote).apply {
-            configureBlocking(false)
-        }
+    constructor(
+        url: URL,
+        executor: ExecutorService,
+        config: Config
+    ) : this(url, executor, config, System::currentTimeMillis, ::openRealSocket)
 
-        val request = """
-            GET / HTTP/1.1
-            User-Agent: WebScraper
-            Accept: text/*
-            Connection: close
-            Host: ${url.host}
-            
-            
-        """.trimIndent()
-            .let { ByteBuffer.wrap(it.toByteArray(StandardCharsets.US_ASCII)) }
-        channel.write(request)
+    private val startTime = getTimeMs()
+    internal var state: State = State.Unestablished
 
-        return HttpResponse(channel)
-    }
-}
+    private val future = object : SimpleFuture<Response> {
+        var response: Response? = null
 
-class HttpResponse(private val channel: ReadableByteChannel) : Contract.Fetcher.ResponseFuture {
-    sealed class Result {
-        object Pending : Result()
-        sealed class Complete : Result() {
-            data class Failure(val code: Int) : Complete()
-            data class Success(val text: String) : Complete()
-        }
+        override fun getIfComplete(): Response? = response
     }
 
-    private var cached: Result.Complete? = null
-    private var onSuccess: ((RawResponse) -> Unit)? = null
+    data class Config(val timeoutMs: Long)
 
     /**
-     * If the request has already completed, this will immediately be called.
-     *
-     * Otherwise, it will not be called until [check] is called after a successful
-     * response.
+     * Unestablished >-|--> Pending >-|--> Success >-|   Failure >-|
+     *         /\--<---|      /\--<---|      /\--<---|      /\--<--|
+     *                 |              |                     |
+     *                 |------>-------|---------->----------|
      */
-    override fun setOnSuccess(action: (RawResponse) -> Unit) {
-        onSuccess = action
-
-        when (val cached = cached) {
-            null -> check()
-            is Result.Complete.Success -> action(cached.text)
-            is Result.Complete.Failure -> { /* TODO */ }
-        }
+    internal sealed class State {
+        object Unestablished : State()
+        data class Establishing(val futureChannel: Future<Either<SocketChannel, Exception>>) : State()
+        data class Pending(val channel: SocketChannel) : State()
+        data class Success(val response: Response) : State()
+        data class Failure(val reason: Exception) : State()
     }
 
-    fun check(): Result {
-        cached?.let { return it }
+    // TODO maybe this should check until it stops changing
+    fun check(): SimpleFuture<Response> {
+        state = state.toNext()
 
-        return check(ByteArrayOutputStream(), ByteBuffer.allocate(twoMb)).also { result ->
-            if (result is Result.Complete) {
-                cached = result
-                channel.close()
-            }
-            val onSuccess = onSuccess
-            if (result is Result.Complete.Success && onSuccess != null) {
-                onSuccess(result.text)
-            }
+        future.response = when (val stateCopy = state) {
+            is State.Success -> stateCopy.response
+            is State.Failure -> Response.Failure(Response.Metadata(url), stateCopy.reason)
+            else -> future.response
         }
+
+        return future
     }
 
-    private tailrec fun check(output: ByteArrayOutputStream, buffer: ByteBuffer): Result {
-        return when (val bytesRead = channel.read(buffer)) {
-            0 -> Result.Pending
-            -1 -> Result.Complete.Success(output.toString(Charsets.US_ASCII)) // TODO handle failure
+    private fun State.toNext(): State = when (this) {
+        is State.Unestablished -> maybeToEstablishing()
+        is State.Establishing -> maybeToPending()
+        is State.Pending -> maybeToSuccess()
+        is State.Success -> this
+        is State.Failure -> this
+    }
+
+    private fun State.Unestablished.maybeToEstablishing(): State {
+        return if (hasTimedOut()) State.Failure(TimeoutException())
+        else State.Establishing(
+            executor.submit(
+                Callable {
+                    openSocket(url)
+                }
+            )
+        )
+    }
+
+    private fun State.Establishing.maybeToPending(): State {
+        if (hasTimedOut()) return State.Failure(TimeoutException())
+        val maybeChannel = futureChannel.getIfComplete() ?: return this
+
+        return maybeChannel.unwrap(
+            ifFail = { e ->
+                State.Failure(e)
+            },
+            ifSuccess = { channel ->
+                val request = """
+                    GET / HTTP/1.1
+                    User-Agent: WebScraper
+                    Accept: text/*
+                    Connection: close
+                    Host: ${url.host}
+                    
+                    
+                """.trimIndent()
+                    .let { ByteBuffer.wrap(it.toByteArray(StandardCharsets.US_ASCII)) }
+                channel.write(request)
+
+                State.Pending(channel)
+            }
+        )
+    }
+
+    private fun State.Pending.maybeToSuccess(
+        output: ByteArrayOutputStream = ByteArrayOutputStream(),
+        buffer: ByteBuffer = ByteBuffer.allocate(TWO_MB)
+    ): State {
+        val bytesRead = try {
+            channel.read(buffer)
+        } catch (e: SocketException) {
+            return State.Failure(e)
+        }
+
+        return when (bytesRead) {
+            0 ->
+                if (hasTimedOut()) State.Failure(TimeoutException())
+                else this
+            -1 -> State.Success(
+                Response.Success(
+                    Response.Metadata(url),
+                    output.toString(Charsets.US_ASCII),
+                )
+            )
             else -> {
                 buffer.flip()
                 output.write(buffer.array(), 0, bytesRead)
                 buffer.clear()
-                check(output, buffer)
+                maybeToSuccess(output, buffer)
             }
         }
     }
+
+    private fun hasTimedOut() = getTimeMs() - startTime > config.timeoutMs
 }

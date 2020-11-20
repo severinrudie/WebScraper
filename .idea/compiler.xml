@@ -6,10 +6,14 @@
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
-        <module name="Shared" />
+        <module name="App" />
         <module name="Fetcher" />
+        <module name="Shared" />
         <module name="Parser" />
       </profile>
     </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="Driver" target="14" />
+    </bytecodeTargetLevel>
   </component>
 </project>

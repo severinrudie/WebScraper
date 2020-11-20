@@ -1,13 +1,13 @@
 package e.severin.rudie
 
+import java.util.Queue
+
 interface Contract {
 
     interface Fetcher {
-        fun fetch(url: String): ResponseFuture
+        fun fetch(url: String)
 
-        interface ResponseFuture {
-            fun setOnSuccess(action: (RawResponse) -> Unit)
-        }
+        val responses: Queue<Response>
     }
 
     interface Parser {

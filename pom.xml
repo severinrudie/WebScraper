@@ -10,6 +10,7 @@
         <module>Fetcher</module>
         <module>Shared</module>
         <module>Parser</module>
+        <module>App</module>
     </modules>
     <packaging>pom</packaging>
 
@@ -23,6 +24,7 @@
         <kotlin.version>1.4.10</kotlin.version>
         <kotlin.code.style>official</kotlin.code.style>
         <junit.version>5.7.0</junit.version>
+        <assertj.version>3.18.1</assertj.version>
     </properties>
 
     <dependencies>
@@ -118,6 +120,14 @@
                         </goals>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>14</source>
+                    <target>14</target>
+                </configuration>
             </plugin>
         </plugins>
     </build>
